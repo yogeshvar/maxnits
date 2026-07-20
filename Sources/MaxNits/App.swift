@@ -1,13 +1,14 @@
 import AppKit
-import Carbon.HIToolbox
 
 @main
 struct MaxNitsApp {
     @MainActor
     static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+
         // `maxnits --status` prints EDR info for each display and exits.
         // Useful for checking whether a display can actually go above SDR brightness.
-        if CommandLine.arguments.contains("--status") {
+        if arguments.contains("--status") {
             for screen in NSScreen.screens {
                 let current = screen.maximumExtendedDynamicRangeColorComponentValue
                 let potential = screen.maximumPotentialExtendedDynamicRangeColorComponentValue
@@ -16,26 +17,9 @@ struct MaxNitsApp {
             exit(0)
         }
 
-        // `maxnits --hotkeytest` registers ⌘F1/⌘F2 and reports whether the
-        // registration itself succeeded (i.e. nothing else on the system
-        // already claimed that combination), independent of actually
-        // pressing the keys.
-        if CommandLine.arguments.contains("--hotkeytest") {
-            let manager = HotKeyManager()
-            let okIncrease = manager.register(keyCode: UInt32(kVK_F2), modifiers: UInt32(cmdKey)) {
-                print("⌘F2 fired")
-            }
-            let okDecrease = manager.register(keyCode: UInt32(kVK_F1), modifiers: UInt32(cmdKey)) {
-                print("⌘F1 fired")
-            }
-            print("⌘F2 (increase) registered: \(okIncrease)")
-            print("⌘F1 (decrease) registered: \(okDecrease)")
-            exit(okIncrease && okDecrease ? 0 : 1)
-        }
-
         // `maxnits --test` enables the boost for 6 seconds, reports whether
         // EDR engaged, then restores and exits. Handy sanity check.
-        if CommandLine.arguments.contains("--test") {
+        if arguments.contains("--test") {
             let app = NSApplication.shared
             app.setActivationPolicy(.accessory)
             let controller = BrightnessController()
@@ -60,9 +44,24 @@ struct MaxNitsApp {
             app.run()
         }
 
-        let app = NSApplication.shared
-        let delegate = AppDelegate()
-        app.delegate = delegate
-        app.run()
+        if arguments.contains("-h") || arguments.contains("--help") {
+            _ = CLIClient.run([])
+            exit(0)
+        }
+
+        guard let first = arguments.first else {
+            Daemon.run()
+        }
+
+        switch first {
+        case "daemon":
+            Daemon.run()
+        case "enable-login":
+            exit(LoginItem.enable())
+        case "disable-login":
+            exit(LoginItem.disable())
+        default:
+            exit(CLIClient.run(arguments))
+        }
     }
 }
