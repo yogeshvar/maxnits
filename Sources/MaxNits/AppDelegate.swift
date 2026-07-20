@@ -3,16 +3,44 @@ import ServiceManagement
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private enum DefaultsKey {
+        static let boost = "boost"
+        static let boostEnabled = "boostEnabled"
+        static let pauseOnBattery = "pauseOnBattery"
+    }
+
     private let controller = BrightnessController()
+    private let hud = HUDController()
 
     private var statusItem: NSStatusItem!
     private var statusInfoItem: NSMenuItem!
     private var toggleItem: NSMenuItem!
+    private var pauseOnBatteryItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var slider: NSSlider!
 
+    private var boostPercent: Int {
+        Int((controller.boost * 100).rounded())
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: DefaultsKey.boost) != nil {
+            controller.boost = defaults.double(forKey: DefaultsKey.boost)
+        }
+        controller.pauseOnBattery = defaults.bool(forKey: DefaultsKey.pauseOnBattery)
+
+        controller.onPauseStateChange = { [weak self] paused in
+            guard let self else { return }
+            if paused {
+                self.hud.showPaused(reason: PowerMonitor.pauseReason)
+            } else {
+                self.hud.showResumed(percent: self.boostPercent)
+            }
+            self.updateStatusIcon()
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         updateStatusIcon()
@@ -32,15 +60,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(sliderMenuItem())
         menu.addItem(.separator())
 
+        pauseOnBatteryItem = NSMenuItem(title: "Pause on Battery", action: #selector(togglePauseOnBattery), keyEquivalent: "")
+        pauseOnBatteryItem.target = self
+        pauseOnBatteryItem.toolTip = "Battery Guard: automatically pause the boost when unplugged. Low Power Mode always pauses."
+        menu.addItem(pauseOnBatteryItem)
+
         launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
 
         menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "Quit Overbright", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit MaxNits", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+
+        // Restore the boost if it was on last time.
+        if defaults.bool(forKey: DefaultsKey.boostEnabled) {
+            controller.enable()
+            updateStatusIcon()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -50,7 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         statusInfoItem.title = controller.statusDescription
         toggleItem.state = controller.isEnabled ? .on : .off
+        pauseOnBatteryItem.state = controller.pauseOnBattery ? .on : .off
         launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        slider.doubleValue = controller.boost
     }
 
     // MARK: - Actions
@@ -58,14 +99,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleBoost() {
         if controller.isEnabled {
             controller.disable()
+            hud.showOff()
         } else {
             controller.enable()
+            if controller.isPausedByPower {
+                hud.showPaused(reason: PowerMonitor.pauseReason)
+            } else {
+                hud.showBoost(percent: boostPercent)
+            }
         }
+        UserDefaults.standard.set(controller.isEnabled, forKey: DefaultsKey.boostEnabled)
         updateStatusIcon()
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
         controller.boost = sender.doubleValue
+        UserDefaults.standard.set(controller.boost, forKey: DefaultsKey.boost)
+        if controller.isEnabled && !controller.isPausedByPower {
+            hud.showBoost(percent: boostPercent)
+        }
+    }
+
+    @objc private func togglePauseOnBattery() {
+        controller.pauseOnBattery.toggle()
+        UserDefaults.standard.set(controller.pauseOnBattery, forKey: DefaultsKey.pauseOnBattery)
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -100,10 +157,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateStatusIcon() {
-        let symbol = controller.isEnabled ? "sun.max.fill" : "sun.max"
+        let symbol: String
+        if controller.isEnabled {
+            symbol = controller.isPausedByPower ? "sun.min" : "sun.max.fill"
+        } else {
+            symbol = "sun.max"
+        }
         statusItem.button?.image = NSImage(
             systemSymbolName: symbol,
-            accessibilityDescription: "Overbright"
+            accessibilityDescription: "MaxNits"
         )
     }
 }

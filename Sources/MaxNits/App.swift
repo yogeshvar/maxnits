@@ -1,10 +1,10 @@
 import AppKit
 
 @main
-struct OverbrightApp {
+struct MaxNitsApp {
     @MainActor
     static func main() {
-        // `overbright --status` prints EDR info for each display and exits.
+        // `maxnits --status` prints EDR info for each display and exits.
         // Useful for checking whether a display can actually go above SDR brightness.
         if CommandLine.arguments.contains("--status") {
             for screen in NSScreen.screens {
@@ -15,7 +15,7 @@ struct OverbrightApp {
             exit(0)
         }
 
-        // `overbright --test` enables the boost for 6 seconds, reports whether
+        // `maxnits --test` enables the boost for 6 seconds, reports whether
         // EDR engaged, then restores and exits. Handy sanity check.
         if CommandLine.arguments.contains("--test") {
             let app = NSApplication.shared
@@ -27,9 +27,13 @@ struct OverbrightApp {
             Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
                 Task { @MainActor in
                     ticks += 1
-                    for screen in NSScreen.screens {
-                        let headroom = screen.maximumExtendedDynamicRangeColorComponentValue
-                        print("t=\(ticks)s \(screen.localizedName): headroom \(String(format: "%.2f", headroom))x")
+                    if controller.isPausedByPower {
+                        print("t=\(ticks)s Battery Guard: paused (\(PowerMonitor.pauseReason))")
+                    } else {
+                        for screen in NSScreen.screens {
+                            let headroom = screen.maximumExtendedDynamicRangeColorComponentValue
+                            print("t=\(ticks)s \(screen.localizedName): headroom \(String(format: "%.2f", headroom))x")
+                        }
                     }
                     if ticks >= 6 {
                         timer.invalidate()

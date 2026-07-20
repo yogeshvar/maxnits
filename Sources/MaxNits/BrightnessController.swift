@@ -17,10 +17,25 @@ final class BrightnessController {
 
     private(set) var isEnabled = false
 
+    /// True while the boost is temporarily suspended because of battery power
+    /// or Low Power Mode (Battery Guard).
+    private(set) var isPausedByPower = false
+
+    /// Called when Battery Guard pauses or resumes the boost.
+    var onPauseStateChange: ((Bool) -> Void)?
+
+    /// When true, the boost pauses automatically on battery power.
+    /// (Low Power Mode always pauses, regardless of this setting.)
+    var pauseOnBattery: Bool = false {
+        didSet {
+            if isEnabled { tick() }
+        }
+    }
+
     /// 0.0 ... 1.0 — how much of the available EDR headroom to use.
     var boost: Double = 1.0 {
         didSet {
-            if isEnabled { apply() }
+            if isEnabled && !isPausedByPower { apply() }
         }
     }
 
@@ -34,6 +49,9 @@ final class BrightnessController {
     var statusDescription: String {
         guard let screen = brightestCapableScreen() else {
             return "No EDR-capable display found"
+        }
+        if isEnabled && isPausedByPower {
+            return "Paused — \(PowerMonitor.pauseReason)"
         }
         let headroom = screen.maximumExtendedDynamicRangeColorComponentValue
         let potential = screen.maximumPotentialExtendedDynamicRangeColorComponentValue
@@ -49,8 +67,7 @@ final class BrightnessController {
     func enable() {
         guard !isEnabled else { return }
         isEnabled = true
-        refreshOverlays()
-        apply()
+        tick()
 
         // Headroom appears asynchronously after the EDR overlay first renders,
         // and it changes when the user moves the system brightness slider —
@@ -69,9 +86,7 @@ final class BrightnessController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.isEnabled else { return }
-                self.refreshOverlays()
-                self.apply()
+                self?.tick()
             }
         }
     }
@@ -85,6 +100,35 @@ final class BrightnessController {
             NotificationCenter.default.removeObserver(screenObserver)
             self.screenObserver = nil
         }
+        isPausedByPower = false
+        suspendBoost()
+    }
+
+    // MARK: - Internals
+
+    private func tick() {
+        guard isEnabled else { return }
+
+        // Battery Guard: pause on battery (if opted in) or in Low Power Mode.
+        let shouldPause = PowerMonitor.shouldPause(pauseOnBattery: pauseOnBattery)
+        if shouldPause != isPausedByPower {
+            isPausedByPower = shouldPause
+            if shouldPause {
+                suspendBoost()
+            }
+            onPauseStateChange?(shouldPause)
+        }
+        guard !isPausedByPower else { return }
+
+        refreshOverlays()
+        for overlay in overlays.values {
+            overlay.render()
+        }
+        apply()
+    }
+
+    /// Tear down overlays and restore the display, without touching `isEnabled`.
+    private func suspendBoost() {
         for overlay in overlays.values {
             overlay.close()
         }
@@ -92,17 +136,6 @@ final class BrightnessController {
         originalTables.removeAll()
         appliedFactors.removeAll()
         CGDisplayRestoreColorSyncSettings()
-    }
-
-    // MARK: - Internals
-
-    private func tick() {
-        guard isEnabled else { return }
-        refreshOverlays()
-        for overlay in overlays.values {
-            overlay.render()
-        }
-        apply()
     }
 
     /// Keep exactly one EDR-activating overlay per capable screen.

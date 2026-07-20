@@ -1,4 +1,4 @@
-APP_NAME = Overbright
+APP_NAME = MaxNits
 BUILD_DIR = .build/release
 APP_BUNDLE = dist/$(APP_NAME).app
 
