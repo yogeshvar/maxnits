@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import ServiceManagement
 
 @MainActor
@@ -8,8 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         static let boostEnabled = "boostEnabled"
     }
 
+    private static let boostStep = 0.1
+
     private let controller = BrightnessController()
     private let hud = HUDController()
+    private let hotKeys = HotKeyManager()
 
     private var statusItem: NSStatusItem!
     private var statusInfoItem: NSMenuItem!
@@ -63,6 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             controller.enable()
             updateStatusIcon()
         }
+
+        hotKeys.register(keyCode: UInt32(kVK_F2), modifiers: UInt32(cmdKey)) { [weak self] in
+            self?.increaseBoost()
+        }
+        hotKeys.register(keyCode: UInt32(kVK_F1), modifiers: UInt32(cmdKey)) { [weak self] in
+            self?.decreaseBoost()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -98,6 +109,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if controller.isEnabled {
             hud.showBoost(percent: boostPercent)
         }
+    }
+
+    private func increaseBoost() {
+        if !controller.isEnabled {
+            controller.enable()
+            UserDefaults.standard.set(true, forKey: DefaultsKey.boostEnabled)
+        }
+        controller.boost = min(1.0, controller.boost + Self.boostStep)
+        UserDefaults.standard.set(controller.boost, forKey: DefaultsKey.boost)
+        hud.showBoost(percent: boostPercent)
+        updateStatusIcon()
+    }
+
+    private func decreaseBoost() {
+        guard controller.isEnabled else { return }
+        controller.boost = max(0.0, controller.boost - Self.boostStep)
+        UserDefaults.standard.set(controller.boost, forKey: DefaultsKey.boost)
+        hud.showBoost(percent: boostPercent)
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -136,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let item = NSMenuItem()
         item.view = container
+        item.toolTip = "⌘F1 to dim, ⌘F2 to brighten — works anywhere, even when this menu is closed."
         return item
     }
 

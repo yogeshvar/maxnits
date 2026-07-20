@@ -9,7 +9,8 @@ No purchases, no subscriptions, no telemetry. MIT licensed.
 Apple's MacBook Pro (14"/16", M1 and later) has a Liquid Retina XDR display capable of 1000 nits sustained (1600 nits peak for HDR), but macOS caps normal use at 600 nits. Paid apps exist that lift this cap — MaxNits does it for free.
 
 - **☀️ Minimal** — one toggle, one slider with a live percentage readout, nothing else to learn.
-- **✨ Center-screen HUD** — a native-feeling bezel pops up in the middle of the screen when you turn the boost on/off, so you always know what's happening.
+- **⌨️ Global shortcuts** — ⌘F2 brightens, ⌘F1 dims, from anywhere, even with the menu closed.
+- **✨ Center-screen HUD** — a native-feeling bezel pops up in the middle of the screen when the boost level changes, so you always know what's happening.
 - Settings persist across restarts.
 
 ## How it works
@@ -45,13 +46,17 @@ Then optionally drag `dist/MaxNits.app` into `/Applications`.
 - Click the ☀️ icon in the menu bar.
 - **Boost Brightness** toggles the extra brightness on/off.
 - The slider controls how much of the available headroom to use, with the current percentage shown next to it.
+- **⌘F2** increases the boost 10% at a time (turning it on if it was off); **⌘F1** decreases it — works system-wide, no need to open the menu.
 - **Launch at Login** keeps it running.
+
+If ⌘F1/⌘F2 don't do anything, something else on your Mac (another app, or a system shortcut like "Turn display mirroring on/off" under System Settings → Keyboard → Keyboard Shortcuts) may already be using that combination — free it up there or open an issue to request configurable shortcuts.
 
 Check what your display supports from the terminal:
 
 ```sh
-./dist/MaxNits.app/Contents/MacOS/MaxNits --status   # print EDR headroom per display
-./dist/MaxNits.app/Contents/MacOS/MaxNits --test     # 6-second boost self-test
+./dist/MaxNits.app/Contents/MacOS/MaxNits --status      # print EDR headroom per display
+./dist/MaxNits.app/Contents/MacOS/MaxNits --test        # 6-second boost self-test
+./dist/MaxNits.app/Contents/MacOS/MaxNits --hotkeytest  # confirm ⌘F1/⌘F2 aren't already claimed
 ```
 
 ## Caveats
