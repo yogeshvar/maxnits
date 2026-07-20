@@ -15,12 +15,10 @@ enum PowerMonitor {
         ProcessInfo.processInfo.isLowPowerModeEnabled
     }
 
-    /// Whether the boost should be paused right now. Low Power Mode always
-    /// pauses (the user explicitly asked the machine to save energy);
-    /// plain battery power pauses only when the user opted in.
-    static func shouldPause(pauseOnBattery: Bool) -> Bool {
-        if isLowPowerMode { return true }
-        return pauseOnBattery && isOnBattery
+    /// Whether the boost should be paused right now. Battery Guard is opt-in:
+    /// when enabled it pauses on battery power or in Low Power Mode.
+    static func shouldPause(batteryGuard: Bool) -> Bool {
+        batteryGuard && (isOnBattery || isLowPowerMode)
     }
 
     /// Short explanation for the menu/HUD when paused.

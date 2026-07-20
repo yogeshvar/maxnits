@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if defaults.object(forKey: DefaultsKey.boost) != nil {
             controller.boost = defaults.double(forKey: DefaultsKey.boost)
         }
-        controller.pauseOnBattery = defaults.bool(forKey: DefaultsKey.pauseOnBattery)
+        controller.batteryGuard = defaults.bool(forKey: DefaultsKey.pauseOnBattery)
 
         controller.onPauseStateChange = { [weak self] paused in
             guard let self else { return }
@@ -60,9 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(sliderMenuItem())
         menu.addItem(.separator())
 
-        pauseOnBatteryItem = NSMenuItem(title: "Pause on Battery", action: #selector(togglePauseOnBattery), keyEquivalent: "")
+        pauseOnBatteryItem = NSMenuItem(title: "Battery Guard", action: #selector(togglePauseOnBattery), keyEquivalent: "")
         pauseOnBatteryItem.target = self
-        pauseOnBatteryItem.toolTip = "Battery Guard: automatically pause the boost when unplugged. Low Power Mode always pauses."
+        pauseOnBatteryItem.toolTip = "Automatically pause the boost on battery power or in Low Power Mode, and resume on AC power."
         menu.addItem(pauseOnBatteryItem)
 
         launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
@@ -89,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         statusInfoItem.title = controller.statusDescription
         toggleItem.state = controller.isEnabled ? .on : .off
-        pauseOnBatteryItem.state = controller.pauseOnBattery ? .on : .off
+        pauseOnBatteryItem.state = controller.batteryGuard ? .on : .off
         launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         slider.doubleValue = controller.boost
     }
@@ -121,8 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func togglePauseOnBattery() {
-        controller.pauseOnBattery.toggle()
-        UserDefaults.standard.set(controller.pauseOnBattery, forKey: DefaultsKey.pauseOnBattery)
+        controller.batteryGuard.toggle()
+        UserDefaults.standard.set(controller.batteryGuard, forKey: DefaultsKey.pauseOnBattery)
     }
 
     @objc private func toggleLaunchAtLogin() {

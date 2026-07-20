@@ -1,32 +1,29 @@
 import AppKit
-import CoreGraphics
 
-/// Boosts perceived brightness by activating EDR (via tiny overlay windows) and
-/// then scaling the display gamma tables above 1.0 so all SDR content maps into
-/// the unlocked extended range.
+/// Boosts perceived brightness by activating EDR (via tiny "igniter" overlay
+/// windows) and multiplying everything on screen by a factor above 1.0 (via
+/// fullscreen multiply-compositing "booster" overlays).
 ///
-/// Gamma tables set with CGSetDisplayTransferByTable are per-process and are
-/// automatically restored by macOS when the process exits, so a crash can never
-/// leave the display in a broken state.
+/// Both overlays are ordinary windows owned by this process, so quitting or
+/// crashing always returns the display to normal.
 @MainActor
 final class BrightnessController {
     /// A display is considered EDR-active once its reported headroom exceeds this.
     private static let hdrActiveThreshold: CGFloat = 1.05
-    /// Reapply gamma only when the target factor moved more than this.
-    private static let factorTolerance: CGFloat = 0.01
+    /// Re-render the booster only when the multiplier moved more than this.
+    private static let valueTolerance: Double = 0.005
 
     private(set) var isEnabled = false
 
-    /// True while the boost is temporarily suspended because of battery power
-    /// or Low Power Mode (Battery Guard).
+    /// True while the boost is temporarily suspended by Battery Guard.
     private(set) var isPausedByPower = false
 
     /// Called when Battery Guard pauses or resumes the boost.
     var onPauseStateChange: ((Bool) -> Void)?
 
-    /// When true, the boost pauses automatically on battery power.
-    /// (Low Power Mode always pauses, regardless of this setting.)
-    var pauseOnBattery: Bool = false {
+    /// Battery Guard: when true, the boost pauses on battery power or in
+    /// Low Power Mode and resumes automatically on AC power.
+    var batteryGuard: Bool = false {
         didSet {
             if isEnabled { tick() }
         }
@@ -39,9 +36,9 @@ final class BrightnessController {
         }
     }
 
-    private var overlays: [CGDirectDisplayID: OverlayWindowController] = [:]
-    private var originalTables: [CGDirectDisplayID: GammaTable] = [:]
-    private var appliedFactors: [CGDirectDisplayID: CGFloat] = [:]
+    private var igniters: [CGDirectDisplayID: OverlayWindowController] = [:]
+    private var boosters: [CGDirectDisplayID: OverlayWindowController] = [:]
+    private var appliedValues: [CGDirectDisplayID: Double] = [:]
     private var refreshTimer: Timer?
     private var screenObserver: NSObjectProtocol?
 
@@ -69,9 +66,9 @@ final class BrightnessController {
         isEnabled = true
         tick()
 
-        // Headroom appears asynchronously after the EDR overlay first renders,
+        // Headroom appears asynchronously after the igniter first renders,
         // and it changes when the user moves the system brightness slider —
-        // poll and reapply as needed.
+        // poll and adjust as needed.
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.tick()
@@ -109,8 +106,7 @@ final class BrightnessController {
     private func tick() {
         guard isEnabled else { return }
 
-        // Battery Guard: pause on battery (if opted in) or in Low Power Mode.
-        let shouldPause = PowerMonitor.shouldPause(pauseOnBattery: pauseOnBattery)
+        let shouldPause = PowerMonitor.shouldPause(batteryGuard: batteryGuard)
         if shouldPause != isPausedByPower {
             isPausedByPower = shouldPause
             if shouldPause {
@@ -121,59 +117,64 @@ final class BrightnessController {
         guard !isPausedByPower else { return }
 
         refreshOverlays()
-        for overlay in overlays.values {
-            overlay.render()
-        }
         apply()
     }
 
-    /// Tear down overlays and restore the display, without touching `isEnabled`.
+    /// Close all overlay windows without touching `isEnabled`.
     private func suspendBoost() {
-        for overlay in overlays.values {
+        for overlay in igniters.values {
             overlay.close()
         }
-        overlays.removeAll()
-        originalTables.removeAll()
-        appliedFactors.removeAll()
-        CGDisplayRestoreColorSyncSettings()
+        for overlay in boosters.values {
+            overlay.close()
+        }
+        igniters.removeAll()
+        boosters.removeAll()
+        appliedValues.removeAll()
     }
 
-    /// Keep exactly one EDR-activating overlay per capable screen.
+    /// Keep one igniter and one booster per EDR-capable screen.
     private func refreshOverlays() {
         var seen = Set<CGDirectDisplayID>()
         for screen in NSScreen.screens {
             guard let displayId = screen.displayId else { continue }
             seen.insert(displayId)
             guard screen.maximumPotentialExtendedDynamicRangeColorComponentValue > Self.hdrActiveThreshold else { continue }
-            if overlays[displayId] == nil {
-                overlays[displayId] = OverlayWindowController(screen: screen)
+            if igniters[displayId] == nil {
+                igniters[displayId] = OverlayWindowController(screen: screen, kind: .igniter)
             }
+            if boosters[displayId] == nil {
+                let booster = OverlayWindowController(screen: screen, kind: .booster)
+                booster.setValue(1.0)
+                boosters[displayId] = booster
+            }
+            igniters[displayId]?.refresh(screen: screen)
+            boosters[displayId]?.refresh(screen: screen)
         }
-        for (displayId, overlay) in overlays where !seen.contains(displayId) {
+        for (displayId, overlay) in igniters where !seen.contains(displayId) {
             overlay.close()
-            overlays.removeValue(forKey: displayId)
-            originalTables.removeValue(forKey: displayId)
-            appliedFactors.removeValue(forKey: displayId)
+            igniters.removeValue(forKey: displayId)
+        }
+        for (displayId, overlay) in boosters where !seen.contains(displayId) {
+            overlay.close()
+            boosters.removeValue(forKey: displayId)
+            appliedValues.removeValue(forKey: displayId)
         }
     }
 
+    /// Update each booster's multiplier from the current headroom and boost level.
     private func apply() {
         for screen in NSScreen.screens {
-            guard let displayId = screen.displayId else { continue }
-            let headroom = screen.maximumExtendedDynamicRangeColorComponentValue
-            guard headroom > Self.hdrActiveThreshold else { continue }
-
-            if originalTables[displayId] == nil {
-                originalTables[displayId] = GammaTable(displayId: displayId)
-            }
-            guard let original = originalTables[displayId] else { continue }
-
-            let factor = 1.0 + (headroom - 1.0) * CGFloat(boost)
-            if let applied = appliedFactors[displayId], abs(applied - factor) < Self.factorTolerance {
+            guard let displayId = screen.displayId,
+                  let booster = boosters[displayId] else { continue }
+            let headroom = Double(screen.maximumExtendedDynamicRangeColorComponentValue)
+            // Multiplying by more than the headroom would clip; stay within it.
+            let value = 1.0 + max(headroom - 1.0, 0) * boost
+            if let applied = appliedValues[displayId], abs(applied - value) < Self.valueTolerance {
                 continue
             }
-            original.scaled(by: factor, cappedAt: headroom).apply(to: displayId)
-            appliedFactors[displayId] = factor
+            booster.setValue(value)
+            appliedValues[displayId] = value
         }
     }
 
@@ -182,49 +183,6 @@ final class BrightnessController {
             .filter { $0.maximumPotentialExtendedDynamicRangeColorComponentValue > 1.0 }
             .max { $0.maximumPotentialExtendedDynamicRangeColorComponentValue < $1.maximumPotentialExtendedDynamicRangeColorComponentValue }
             ?? NSScreen.main
-    }
-}
-
-/// A captured RGB gamma lookup table for one display.
-private struct GammaTable {
-    var red: [CGGammaValue]
-    var green: [CGGammaValue]
-    var blue: [CGGammaValue]
-
-    init?(displayId: CGDirectDisplayID) {
-        let capacity = CGDisplayGammaTableCapacity(displayId)
-        guard capacity > 0 else { return nil }
-        var red = [CGGammaValue](repeating: 0, count: Int(capacity))
-        var green = [CGGammaValue](repeating: 0, count: Int(capacity))
-        var blue = [CGGammaValue](repeating: 0, count: Int(capacity))
-        var sampleCount: UInt32 = 0
-        guard CGGetDisplayTransferByTable(displayId, capacity, &red, &green, &blue, &sampleCount) == .success,
-              sampleCount > 0 else {
-            return nil
-        }
-        self.red = Array(red.prefix(Int(sampleCount)))
-        self.green = Array(green.prefix(Int(sampleCount)))
-        self.blue = Array(blue.prefix(Int(sampleCount)))
-    }
-
-    /// Multiply every entry by `factor`. Values above 1.0 are what push SDR
-    /// content into the EDR range; `cap` avoids requesting more than the
-    /// display can currently show.
-    func scaled(by factor: CGFloat, cappedAt cap: CGFloat) -> GammaTable {
-        var result = self
-        let f = Float(factor)
-        let limit = Float(cap)
-        result.red = red.map { min($0 * f, limit) }
-        result.green = green.map { min($0 * f, limit) }
-        result.blue = blue.map { min($0 * f, limit) }
-        return result
-    }
-
-    func apply(to displayId: CGDirectDisplayID) {
-        var red = self.red
-        var green = self.green
-        var blue = self.blue
-        CGSetDisplayTransferByTable(displayId, UInt32(red.count), &red, &green, &blue)
     }
 }
 

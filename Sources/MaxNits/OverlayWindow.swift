@@ -2,43 +2,73 @@ import AppKit
 import Metal
 import QuartzCore
 
-/// A 1x1 px borderless window that renders a single pixel brighter than SDR white.
-/// Its only job is to make macOS switch the display into EDR mode, which unlocks
-/// brightness headroom above the standard 600-nit SDR ceiling.
+/// The two overlay windows that do the actual brightness work:
+///
+/// - An "igniter": a 1x1 px window rendering a pixel brighter than SDR white,
+///   which makes macOS switch the display into EDR mode and unlock headroom.
+/// - A "booster": a fullscreen window whose layer uses multiply compositing,
+///   so the WindowServer multiplies everything beneath it by a constant
+///   factor above 1.0 — mapped into the unlocked EDR range.
 @MainActor
 final class OverlayWindowController {
-    private let window: NSWindow
-    private let overlayView: EDRPixelView
+    enum Kind {
+        case igniter
+        case booster
+    }
 
-    init(screen: NSScreen) {
-        let size: CGFloat = 1
-        // Tucked into the top-right corner of the screen.
-        let frame = NSRect(
-            x: screen.frame.maxX - size,
-            y: screen.frame.maxY - size,
-            width: size,
-            height: size
-        )
+    private let window: NSWindow
+    private let overlayView: ConstantEDRView
+    private let kind: Kind
+
+    init(screen: NSScreen, kind: Kind = .igniter) {
+        self.kind = kind
+
+        let frame: NSRect
+        switch kind {
+        case .igniter:
+            // Tucked into the top-right corner of the screen.
+            frame = NSRect(x: screen.frame.maxX - 1, y: screen.frame.maxY - 1, width: 1, height: 1)
+        case .booster:
+            frame = screen.frame
+        }
 
         window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.level = .screenSaver
-        window.ignoresMouseEvents = true
+        switch kind {
+        case .igniter:
+            window.level = .screenSaver
+        case .booster:
+            // Above everything, including the menu bar.
+            window.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
+        }
         window.collectionBehavior = [.stationary, .canJoinAllSpaces, .ignoresCycle, .fullScreenAuxiliary]
+        window.ignoresMouseEvents = true
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
-        // Keep the bright pixel out of screenshots and screen recordings.
+        // Keep the overlay out of screenshots and screen recordings.
         window.sharingType = .none
 
-        overlayView = EDRPixelView(frame: NSRect(origin: .zero, size: frame.size))
+        overlayView = ConstantEDRView(
+            frame: NSRect(origin: .zero, size: frame.size),
+            multiplyCompositing: kind == .booster
+        )
         window.contentView = overlayView
         window.orderFrontRegardless()
         overlayView.render()
     }
 
-    /// Re-render the EDR pixel (cheap; called periodically so EDR stays active
-    /// across display sleep, reconfiguration, etc.).
-    func render() {
+    /// The constant color the overlay renders. For the booster this is the
+    /// brightness multiplier applied to everything beneath it.
+    func setValue(_ value: Double) {
+        overlayView.value = value
+    }
+
+    /// Keep the window matched to its screen and re-render (cheap; called
+    /// periodically so EDR stays active across display changes).
+    func refresh(screen: NSScreen) {
+        if kind == .booster, window.frame != screen.frame {
+            window.setFrame(screen.frame, display: true)
+        }
         overlayView.render()
     }
 
@@ -47,25 +77,31 @@ final class OverlayWindowController {
     }
 }
 
-/// Renders one pixel with a color component value above 1.0 into an
-/// EDR-enabled CAMetalLayer.
-private final class EDRPixelView: NSView {
-    /// Requested brightness of the pixel in extended range. Anything meaningfully
-    /// above 1.0 activates EDR; the OS clamps it to the display's real headroom.
-    private static let edrValue = 2.0
+/// Renders a single constant extended-range color into an EDR-enabled
+/// CAMetalLayer. The drawable is one pixel; the layer stretches it.
+private final class ConstantEDRView: NSView {
+    var value: Double = 2.0 {
+        didSet {
+            if abs(value - oldValue) > 0.001 { render() }
+        }
+    }
 
     private let metalLayer = CAMetalLayer()
     private let device = MTLCreateSystemDefaultDevice()
     private lazy var commandQueue = device?.makeCommandQueue()
 
-    override init(frame frameRect: NSRect) {
+    init(frame frameRect: NSRect, multiplyCompositing: Bool) {
         super.init(frame: frameRect)
         wantsLayer = true
         metalLayer.device = device
         metalLayer.pixelFormat = .rgba16Float
-        metalLayer.colorspace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
+        metalLayer.colorspace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)
         metalLayer.wantsExtendedDynamicRangeContent = true
+        metalLayer.isOpaque = false
         metalLayer.drawableSize = CGSize(width: 1, height: 1)
+        if multiplyCompositing {
+            metalLayer.compositingFilter = "multiply"
+        }
         layer = metalLayer
     }
 
@@ -85,8 +121,7 @@ private final class EDRPixelView: NSView {
         pass.colorAttachments[0].texture = drawable.texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
-        let v = Self.edrValue
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: v, green: v, blue: v, alpha: 1.0)
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: value, green: value, blue: value, alpha: 1.0)
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.endEncoding()
