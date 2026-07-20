@@ -15,24 +15,10 @@ final class BrightnessController {
 
     private(set) var isEnabled = false
 
-    /// True while the boost is temporarily suspended by Battery Guard.
-    private(set) var isPausedByPower = false
-
-    /// Called when Battery Guard pauses or resumes the boost.
-    var onPauseStateChange: ((Bool) -> Void)?
-
-    /// Battery Guard: when true, the boost pauses on battery power or in
-    /// Low Power Mode and resumes automatically on AC power.
-    var batteryGuard: Bool = false {
-        didSet {
-            if isEnabled { tick() }
-        }
-    }
-
     /// 0.0 ... 1.0 — how much of the available EDR headroom to use.
     var boost: Double = 1.0 {
         didSet {
-            if isEnabled && !isPausedByPower { apply() }
+            if isEnabled { apply() }
         }
     }
 
@@ -46,9 +32,6 @@ final class BrightnessController {
     var statusDescription: String {
         guard let screen = brightestCapableScreen() else {
             return "No EDR-capable display found"
-        }
-        if isEnabled && isPausedByPower {
-            return "Paused — \(PowerMonitor.pauseReason)"
         }
         let headroom = screen.maximumExtendedDynamicRangeColorComponentValue
         let potential = screen.maximumPotentialExtendedDynamicRangeColorComponentValue
@@ -64,14 +47,16 @@ final class BrightnessController {
     func enable() {
         guard !isEnabled else { return }
         isEnabled = true
-        tick()
+        refreshOverlays()
+        apply()
 
         // Headroom appears asynchronously after the igniter first renders,
         // and it changes when the user moves the system brightness slider —
         // poll and adjust as needed.
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.tick()
+                self?.refreshOverlays()
+                self?.apply()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -83,7 +68,8 @@ final class BrightnessController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.tick()
+                self?.refreshOverlays()
+                self?.apply()
             }
         }
     }
@@ -97,31 +83,6 @@ final class BrightnessController {
             NotificationCenter.default.removeObserver(screenObserver)
             self.screenObserver = nil
         }
-        isPausedByPower = false
-        suspendBoost()
-    }
-
-    // MARK: - Internals
-
-    private func tick() {
-        guard isEnabled else { return }
-
-        let shouldPause = PowerMonitor.shouldPause(batteryGuard: batteryGuard)
-        if shouldPause != isPausedByPower {
-            isPausedByPower = shouldPause
-            if shouldPause {
-                suspendBoost()
-            }
-            onPauseStateChange?(shouldPause)
-        }
-        guard !isPausedByPower else { return }
-
-        refreshOverlays()
-        apply()
-    }
-
-    /// Close all overlay windows without touching `isEnabled`.
-    private func suspendBoost() {
         for overlay in igniters.values {
             overlay.close()
         }
@@ -132,6 +93,8 @@ final class BrightnessController {
         boosters.removeAll()
         appliedValues.removeAll()
     }
+
+    // MARK: - Internals
 
     /// Keep one igniter and one booster per EDR-capable screen.
     private func refreshOverlays() {

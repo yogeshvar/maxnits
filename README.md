@@ -6,20 +6,20 @@ No purchases, no subscriptions, no telemetry. MIT licensed.
 
 ## Why MaxNits?
 
-Apple's MacBook Pro (14"/16", M1 and later) has a Liquid Retina XDR display capable of 1000 nits sustained (1600 nits peak for HDR), but macOS caps normal use at 600 nits. Paid apps exist that lift this cap — MaxNits does it for free, plus a couple of things the paid ones don't:
+Apple's MacBook Pro (14"/16", M1 and later) has a Liquid Retina XDR display capable of 1000 nits sustained (1600 nits peak for HDR), but macOS caps normal use at 600 nits. Paid apps exist that lift this cap — MaxNits does it for free.
 
-- **🔋 Battery Guard** — the boost can automatically pause when you unplug, and always pauses in Low Power Mode, then resumes by itself when power is back. Max brightness when you're plugged in, max battery when you're not.
-- **✨ Center-screen HUD** — a native-feeling bezel pops up in the middle of the screen when the boost changes (on, off, level, paused, resumed), so you always know what's happening.
-- **☀️ Simple** — one toggle, one slider, nothing else to learn. Settings persist across restarts.
+- **☀️ Minimal** — one toggle, one slider with a live percentage readout, nothing else to learn.
+- **✨ Center-screen HUD** — a native-feeling bezel pops up in the middle of the screen when you turn the boost on/off, so you always know what's happening.
+- Settings persist across restarts.
 
 ## How it works
 
-MaxNits uses only public macOS APIs:
+MaxNits uses only public macOS APIs — no gamma-table hacks, which modern macOS silently clamps to normal SDR range anyway.
 
-1. **EDR activation** — a 1×1 pixel invisible overlay window renders a single pixel brighter than SDR white using Metal (`CAMetalLayer` with `wantsExtendedDynamicRangeContent`). This makes macOS switch the display into Extended Dynamic Range mode, which unlocks brightness headroom above the SDR ceiling.
-2. **Gamma shift** — the display's gamma tables are scaled above 1.0 with `CGSetDisplayTransferByTable`, mapping all normal content into the unlocked extended range. Result: everything on screen gets brighter, up to the panel's real limit.
+1. **EDR activation** — a 1×1 pixel invisible overlay window renders a pixel brighter than SDR white using Metal (`CAMetalLayer` with `wantsExtendedDynamicRangeContent`). This makes macOS switch the display into Extended Dynamic Range mode, unlocking brightness headroom above the SDR ceiling.
+2. **Multiply-compositing boost** — a second, fullscreen, click-through overlay window renders a constant color above 1.0 with its layer's `compositingFilter` set to `"multiply"`. The WindowServer scales everything beneath it by that value before it reaches the (now EDR-enabled) display, up to the panel's real headroom.
 
-Because gamma tables are per-process and macOS restores them automatically when the process exits, MaxNits can never leave your display stuck in a weird state — even if it crashes.
+Both overlays are just windows owned by MaxNits — quitting or crashing the app instantly removes them and returns the display to normal.
 
 ## Requirements
 
@@ -44,8 +44,7 @@ Then optionally drag `dist/MaxNits.app` into `/Applications`.
 
 - Click the ☀️ icon in the menu bar.
 - **Boost Brightness** toggles the extra brightness on/off.
-- The slider controls how much of the available headroom to use.
-- **Pause on Battery** enables Battery Guard.
+- The slider controls how much of the available headroom to use, with the current percentage shown next to it.
 - **Launch at Login** keeps it running.
 
 Check what your display supports from the terminal:
@@ -57,14 +56,13 @@ Check what your display supports from the terminal:
 
 ## Caveats
 
-- **Battery & heat**: 1000 nits draws significantly more power than 600 (that's what Battery Guard is for).
+- **Battery & heat**: 1000 nits draws significantly more power than 600.
 - **Auto-brightness**: macOS may still dim the display based on ambient light or thermal pressure; MaxNits works on top of whatever the OS allows at that moment.
 - **HDR content**: while boosted, true HDR content has less headroom left to stand out.
-- Apps that also modify gamma (f.lux, some color-calibration tools) may conflict.
 
 ## Credits
 
-The EDR + gamma technique was pioneered by apps like [BrightIntosh](https://github.com/niklasr22/BrightIntosh) (GPL) and [FullBright](https://fullbright.app). MaxNits is an independent, from-scratch MIT-licensed implementation of the same idea.
+The EDR + multiply-overlay technique was pioneered by apps like [BrightIntosh](https://github.com/niklasr22/BrightIntosh) (GPL) and used in [FullBright](https://fullbright.app) and [BetterDisplay](https://github.com/waydabber/BetterDisplay)'s "Software Metal Upscaling" mode. MaxNits is an independent, from-scratch MIT-licensed implementation of the same idea.
 
 ## License
 

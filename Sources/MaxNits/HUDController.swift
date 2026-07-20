@@ -59,14 +59,6 @@ final class HUDController {
         show(symbol: "sun.min", text: "Boost Off")
     }
 
-    func showPaused(reason: String) {
-        show(symbol: "battery.75percent", text: "Paused — \(reason)")
-    }
-
-    func showResumed(percent: Int) {
-        show(symbol: "sun.max.fill", text: "Resumed — Boost \(percent)%")
-    }
-
     private func show(symbol: String, text: String) {
         let config = NSImage.SymbolConfiguration(pointSize: 58, weight: .regular)
         iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: text)?

@@ -27,13 +27,9 @@ struct MaxNitsApp {
             Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
                 Task { @MainActor in
                     ticks += 1
-                    if controller.isPausedByPower {
-                        print("t=\(ticks)s Battery Guard: paused (\(PowerMonitor.pauseReason))")
-                    } else {
-                        for screen in NSScreen.screens {
-                            let headroom = screen.maximumExtendedDynamicRangeColorComponentValue
-                            print("t=\(ticks)s \(screen.localizedName): headroom \(String(format: "%.2f", headroom))x")
-                        }
+                    for screen in NSScreen.screens {
+                        let headroom = screen.maximumExtendedDynamicRangeColorComponentValue
+                        print("t=\(ticks)s \(screen.localizedName): headroom \(String(format: "%.2f", headroom))x")
                     }
                     if ticks >= 6 {
                         timer.invalidate()
