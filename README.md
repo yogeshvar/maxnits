@@ -29,7 +29,18 @@ Both overlays are just windows owned by a small background daemon process — qu
 
 ## Install
 
-Build from source (requires Xcode Command Line Tools):
+### Homebrew
+
+```sh
+brew tap yogeshvar/maxnits
+brew install maxnits
+```
+
+This builds MaxNits from source on your machine (there's no precompiled bottle) — takes about a minute.
+
+### From source
+
+Requires Xcode Command Line Tools:
 
 ```sh
 git clone https://github.com/yogeshvar/maxnits.git
